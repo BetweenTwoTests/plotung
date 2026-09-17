@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reconciliation Canvas</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M6 2h20v10l-7 5v13h-6V17l-7-5z' fill='%23dfe3ea' stroke='%23a3adbd' stroke-width='1.5'/%3E%3Cpath d='M16 3v9l5 4v13M16 12l-5 4v13' fill='none' stroke='%232a78d6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="./demo.css">
+</head>
+<body>
+<div id="stage">
+  <canvas id="c" aria-label="Reconciliation canvas: upper tree drawn as tubes with gene trees threaded inside"></canvas>
+
+  <details class="panel" id="controls" open>
+    <summary><h1>Reconciliation Canvas</h1><span class="chev"></span></summary>
+    <p class="lede">An <b>upper tree</b> (species, hosts, geography) drawn as fat tubes, with <b>lower trees</b> (genes, symbionts) threaded inside. Time runs down the page. Where a lower tree stops following its tube, the events that explain it are drawn: duplication, loss, horizontal transfer.</p>
+    <p class="lede">Drag to pan · scroll to zoom at the cursor · double-click a clade to fit it · hover anything for details. Everything here is simulated: the gene trees are grown along the species tree with a duplication–transfer–loss process, then pruned to what a reconciliation could actually observe. Built with <a href="https://github.com/BetweenTwoTests/plotung">plotung</a>.</p>
+
+    <section>
+      <h2>Simulate</h2>
+      <div class="row inline"><span class="lbl" style="grid-column:1">Upper-tree leaves</span><select id="leaves" aria-label="Number of species leaves"></select></div>
+      <div class="row"><span class="lbl">Gene families <output id="families-out" for="families"></output></span><input type="range" id="families" min="1" max="8" step="1" value="2"></div>
+      <div class="row"><span class="lbl">Duplication rate / level <output id="rd-out" for="rd"></output></span><input type="range" id="rd" min="0" max="0.25" step="0.005" value="0.03"></div>
+      <div class="row"><span class="lbl">Transfer rate / level <output id="rt-out" for="rt"></output></span><input type="range" id="rt" min="0" max="0.25" step="0.005" value="0.015"></div>
+      <div class="row"><span class="lbl">Loss rate / level <output id="rl-out" for="rl"></output></span><input type="range" id="rl" min="0" max="0.25" step="0.005" value="0.03"></div>
+      <div class="row"><span class="lbl">Transfers prefer neighbours <output id="locality-out" for="locality"></output></span><input type="range" id="locality" min="0" max="1" step="0.05" value="0.7"></div>
+      <div class="row"><span class="lbl">Polytomy probability <output id="poly-out" for="poly"></output></span><input type="range" id="poly" min="0" max="0.5" step="0.02" value="0.08"></div>
+      <div class="row inline"><span class="lbl" style="grid-column:1">Seed</span><span style="display:flex;gap:6px"><input type="number" id="seed" min="1" step="1" aria-label="Random seed"><button id="shuffle" title="New random seed and regenerate" aria-label="Shuffle seed">⟳</button></span></div>
+      <button class="primary" id="generate">Generate</button>
+    </section>
+
+    <section>
+      <h2>Display</h2>
+      <div class="row inline"><span class="lbl" style="grid-column:1">Tube style</span><select id="style" aria-label="Tube style"><option value="orth">Orthogonal pipes</option><option value="slant">Slanted tubes</option></select></div>
+      <div class="toggles">
+        <label><input type="checkbox" id="showT" checked> Transfers</label>
+        <label><input type="checkbox" id="showL" checked> Losses</label>
+        <label><input type="checkbox" id="showLabels" checked> Leaf labels</label>
+        <label><input type="checkbox" id="heat" checked> Copy-number tint on collapsed clades</label>
+      </div>
+      <div class="row inline" style="margin-top:8px"><span class="lbl" style="grid-column:1">Scroll zooms</span>
+        <span class="seg" role="radiogroup" aria-label="Zoom axis">
+          <label><input type="radio" name="zoommode" value="both" checked><span>both</span></label>
+          <label><input type="radio" name="zoommode" value="x"><span>width</span></label>
+          <label><input type="radio" name="zoommode" value="y"><span>time</span></label>
+        </span>
+      </div>
+      <div class="row inline" style="margin-top:6px"><span class="lbl" style="grid-column:1">View</span><button id="fit">Fit everything</button></div>
+      <p class="keys"><kbd>F</kbd> fit · <kbd>+</kbd><kbd>−</kbd> zoom · hold <kbd>X</kbd> or <kbd>Y</kbd> while scrolling to zoom one axis · <kbd>S</kbd> toggle tube style · arrows pan</p>
+    </section>
+  </details>
+
+  <aside class="panel" id="legend" aria-label="Legend">
+    <h2>Reading the picture</h2>
+    <div class="gl">
+      <svg viewBox="0 0 26 16"><path class="tubeSw" d="M2 1h22v14H2z"/></svg><span>upper-tree branch (tube)</span>
+      <svg viewBox="0 0 26 16"><path class="gene" d="M13 1v14"/></svg><span>lower-tree lineage inside it</span>
+      <svg viewBox="0 0 26 16"><path class="gene" d="M13 1v7M13 8L7 15M13 8l6 7"/><circle class="geneF" cx="13" cy="8" r="2"/></svg><span>speciation (follows the split)</span>
+      <svg viewBox="0 0 26 16"><path class="gene" d="M13 1v7M8 8h10M8 8v7M18 8v7"/><rect class="geneF" x="10.5" y="5.5" width="5" height="5"/></svg><span>duplication</span>
+      <svg viewBox="0 0 26 16"><path class="gene" d="M13 1v9M10 7l6 6M16 7l-6 6"/></svg><span>loss</span>
+      <svg viewBox="0 0 26 16"><path class="gene" d="M4 1v14" /><path class="gene" stroke-dasharray="2.5 2" d="M4 8Q13 2 22 8"/><path class="geneF" d="M22 8l-4-1 1.2 2.4z"/><path class="gene" d="M22 8v7"/></svg><span>horizontal transfer</span>
+    </div>
+    <h2>Gene families</h2>
+    <div class="fam"><span class="sw"></span>family A</div>
+    <div class="fam"><span class="sw"></span>family B</div>
+    <div class="fam"><span class="sw"></span>family C</div>
+    <div class="fam"><span class="sw"></span>family D</div>
+    <div class="fam"><span class="sw"></span>family E</div>
+    <div class="fam"><span class="sw"></span>family F</div>
+    <div class="fam"><span class="sw"></span>family G</div>
+    <div class="fam"><span class="sw"></span>family H</div>
+  </aside>
+
+  <div class="panel" id="stats"><div id="stat-static"></div><div id="stat-live"></div></div>
+  <canvas id="minimap" aria-label="Minimap"></canvas>
+  <div id="tooltip" hidden></div>
+  <div id="overlay"><div id="overlay-text">Simulating…</div></div>
+</div>
+<script type="module" src="./demo.js"></script>
+</body>
+</html>

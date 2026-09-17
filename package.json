@@ -1,0 +1,48 @@
+{
+  "name": "plotung",
+  "version": "0.1.0",
+  "description": "Zoomable tree-reconciliation visualization: an upper (species / host) tree drawn as tubes with lower (gene / symbiont) trees threaded inside, with duplication, loss and transfer events, scaling to 100k+ leaves.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./model": "./src/model.js",
+    "./layout": "./src/layout.js",
+    "./simulate": "./src/simulate.js",
+    "./viewer": "./src/viewer.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "dev": "node scripts/serve.mjs",
+    "build": "node scripts/build-demo.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "phylogenetics",
+    "reconciliation",
+    "gene-tree",
+    "species-tree",
+    "cophylogeny",
+    "visualization",
+    "canvas",
+    "infinite-canvas",
+    "tree-layout"
+  ],
+  "author": "Leon Kim",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BetweenTwoTests/plotung.git"
+  },
+  "homepage": "https://github.com/BetweenTwoTests/plotung#readme",
+  "bugs": {
+    "url": "https://github.com/BetweenTwoTests/plotung/issues"
+  }
+}
