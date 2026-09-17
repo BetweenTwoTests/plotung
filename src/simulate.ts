@@ -1,11 +1,12 @@
-/* Synthetic data: a random upper tree and gene families grown along it with a
- * duplication–transfer–loss process, then pruned to what a reconciliation could observe.
- * A real application would parse recPhyloXML instead and feed the same {S, G} shape to layout(). */
-import { LEAF, DUP, TRANS, SPEC, SPECLOSS, LOSS, STUB, GeneStore, scratch } from './model.js';
-import { layout } from './layout.js';
+/* Optional synthetic data for demos and stress tests (import from 'plotung/simulate', not part of the
+ * main entry). A random upper tree and gene families grown along it with a duplication–transfer–loss
+ * process, then pruned to what a reconciliation could observe. Produces the compact form directly. */
+import { LEAF, DUP, TRANS, SPEC, SPECLOSS, LOSS, LowerForest, finishUpper, scratch, type UpperTree } from './model.ts';
+import { layout } from './layout.ts';
+import type { Scene } from './types.ts';
 
 /** Deterministic mulberry32 RNG in [0, 1). */
-export function makeRng(seed) {
+export function makeRng(seed: number): () => number {
   let a = (seed >>> 0) || 0x9e3779b9;
   return function () {
     a = (a + 0x6D2B79F5) | 0;
@@ -15,30 +16,21 @@ export function makeRng(seed) {
   };
 }
 
-/**
- * Random upper tree by recursive uniform splitting (Yule-like shape), with polytomies at probability polyProb.
- * Returns the species structure every other module consumes:
- *   n, nLeaves, parent, firstChild, nextSibling, depth, below (leaves under a node), pre (pre-order),
- *   preIndex, maxDepth, y (node level, leaves aligned at maxDepth), yTop (parent level, -1 for the root),
- *   levelStart/levelPipes (pipes alive during each level, in x order).
- */
-export function buildSpecies(nLeaves, polyProb, rng) {
+/** Random upper tree by recursive uniform splitting (Yule-like shape), with polytomies at probability polyProb. */
+export function buildUpper(nLeaves: number, polyProb: number, rng: () => number): UpperTree {
   const cap = Math.max(2, 2 * nLeaves);
-  const parent = new Int32Array(cap).fill(-1);
-  const firstChild = new Int32Array(cap).fill(-1);
-  const nextSibling = new Int32Array(cap).fill(-1);
-  const depth = new Int32Array(cap);
-  const below = new Int32Array(cap);
+  const parent = new Int32Array(cap).fill(-1), firstChild = new Int32Array(cap).fill(-1), nextSibling = new Int32Array(cap).fill(-1);
+  const depth = new Int32Array(cap), below = new Int32Array(cap);
   let n = 1;
   below[0] = nLeaves;
   const st = [0];
   while (st.length) {
-    const v = st.pop();
+    const v = st.pop()!;
     const m = below[v];
     if (m === 1) continue;
     let k = 2;
     if (m >= 3 && rng() < polyProb) k = (m >= 4 && rng() < 0.4) ? 4 : 3;
-    const cuts = [];
+    const cuts: number[] = [];
     while (cuts.length < k - 1) {
       const c = 1 + Math.floor(rng() * (m - 1));
       if (cuts.indexOf(c) < 0) cuts.push(c);
@@ -54,43 +46,13 @@ export function buildSpecies(nLeaves, polyProb, rng) {
       st.push(c);
     }
   }
-  return finishSpecies({ n, nLeaves, parent: parent.subarray(0, n), firstChild: firstChild.subarray(0, n), nextSibling: nextSibling.subarray(0, n), depth: depth.subarray(0, n), below: below.subarray(0, n) });
+  return finishUpper({ n, nLeaves, parent: parent.subarray(0, n), firstChild: firstChild.subarray(0, n), nextSibling: nextSibling.subarray(0, n), depth: depth.subarray(0, n), below: below.subarray(0, n) });
 }
 
-/** Derive pre-order, levels and per-level pipe lists from a bare {n, parent, firstChild, nextSibling, depth, below}. */
-export function finishSpecies(S) {
-  const { n, firstChild, nextSibling, parent, depth } = S;
-  const pre = new Int32Array(n), preIndex = new Int32Array(n);
-  let pi = 0;
-  const st = [0];
-  while (st.length) {
-    const v = st.pop();
-    pre[pi++] = v;
-    let k = 0;
-    for (let c = firstChild[v]; c >= 0; c = nextSibling[c]) scratch[k++] = c;
-    for (let i = k - 1; i >= 0; i--) st.push(scratch[i]);
-  }
-  for (let i = 0; i < n; i++) preIndex[pre[i]] = i;
-  let maxDepth = 1;
-  for (let v = 0; v < n; v++) if (firstChild[v] < 0 && depth[v] > maxDepth) maxDepth = depth[v];
-  const y = new Float64Array(n), yTop = new Float64Array(n);
-  for (let v = 0; v < n; v++) y[v] = firstChild[v] < 0 ? maxDepth : depth[v];
-  for (let v = 0; v < n; v++) yTop[v] = parent[v] < 0 ? -1 : y[parent[v]];
-  // pipes alive per level d (0..maxDepth-1): yTop <= d && y >= d+1, listed in pre-order (x order)
-  const levelStart = new Int32Array(maxDepth + 2);
-  for (let v = 0; v < n; v++) for (let d = Math.max(0, yTop[v]); d < y[v]; d++) levelStart[d + 1]++;
-  for (let d = 0; d <= maxDepth; d++) levelStart[d + 1] += levelStart[d];
-  const levelPipes = new Int32Array(levelStart[maxDepth + 1]);
-  const fill = new Int32Array(maxDepth + 1);
-  for (let i = 0; i < n; i++) {
-    const v = pre[i];
-    for (let d = Math.max(0, yTop[v]); d < y[v]; d++) levelPipes[levelStart[d] + fill[d]++] = v;
-  }
-  return { ...S, pre, preIndex, maxDepth, y, yTop, levelStart, levelPipes };
-}
+export type Rates = { rD: number; rT: number; rL: number; locality: number };
 
 /** A pipe alive at time t, other than s; with probability `locality` a near neighbour in x order. */
-export function pickRecipient(S, s, t, locality, rng) {
+export function pickRecipient(S: UpperTree, s: number, t: number, locality: number, rng: () => number): number {
   const d = Math.floor(t);
   if (d < 0 || d >= S.maxDepth) return -1;
   const a = S.levelStart[d], b = S.levelStart[d + 1], cnt = b - a;
@@ -99,7 +61,7 @@ export function pickRecipient(S, s, t, locality, rng) {
   let lo = a, hi = b - 1;
   while (lo < hi) { const mid = (lo + hi) >> 1; if (S.preIndex[S.levelPipes[mid]] < ps) lo = mid + 1; else hi = mid; }
   const idx = lo;
-  let j;
+  let j: number;
   if (rng() < locality) {
     let off = 1;
     while (rng() < 0.6 && off < cnt) off++;
@@ -118,12 +80,13 @@ export function pickRecipient(S, s, t, locality, rng) {
  * Birth (duplication), transfer and death (loss) along every pipe; speciation copies the lineage into every
  * child pipe. Writes raw nodes into `raw` and returns the family's raw root id.
  */
-export function simulateFamily(S, raw, fam, rates, rng, softCap = 3_000_000) {
+export function simulateFamily(S: UpperTree, raw: LowerForest, fam: number, rates: Rates, rng: () => number, softCap = 3_000_000): number {
   const rootId = raw.n;
   const tp = [-1], ts = [0], tt = [-1];
-  let rD = rates.rD, rT = rates.rT, rL = rates.rL;
+  let rD = rates.rD, rT = rates.rT;
+  const rL = rates.rL;
   while (tp.length) {
-    let cur = tp.pop(); const s = ts.pop(); let t = tt.pop();
+    let cur = tp.pop()!; const s = ts.pop()!; let t = tt.pop()!;
     const yBot = S.y[s], leaf = S.firstChild[s] < 0;
     for (;;) {
       if (raw.n > softCap) { rD = 0; rT = 0; }  // runaway family: only losses from here on
@@ -161,15 +124,15 @@ export function simulateFamily(S, raw, fam, rates, rng, softCap = 3_000_000) {
 
 /**
  * Keep only what a parsimonious reconciliation could observe: subtrees without extant descendants collapse
- * into loss stubs, duplications/transfers with a single surviving side are spliced out.
+ * into a single loss, duplications/transfers with one surviving side are spliced out.
  * Returns the new root id in `out`, or -1 if the family went extinct.
  */
-export function pruneFamily(raw, rootOld, out, fam) {
+export function pruneFamily(raw: LowerForest, rootOld: number, out: LowerForest, fam: number): number {
   const extant = new Int32Array(raw.n), order = new Int32Array(raw.n);
   let len = 0;
   const st = [rootOld];
   while (st.length) {
-    const v = st.pop(); order[len++] = v;
+    const v = st.pop()!; order[len++] = v;
     for (let c = raw.firstChild[v]; c >= 0; c = raw.nextSibling[c]) st.push(c);
   }
   for (let i = len - 1; i >= 0; i--) {
@@ -178,7 +141,7 @@ export function pruneFamily(raw, rootOld, out, fam) {
     else { let e = 0; for (let c = raw.firstChild[v]; c >= 0; c = raw.nextSibling[c]) e += extant[c]; extant[v] = e; }
   }
   if (extant[rootOld] === 0) return -1;
-  const resolve = (v) => {
+  const resolve = (v: number): number => {
     for (;;) {
       const ty = raw.type[v];
       if (ty === DUP) {
@@ -195,7 +158,7 @@ export function pruneFamily(raw, rootOld, out, fam) {
   const newRoot = out.n;
   const sv = [resolve(rootOld)], sp = [-1];
   while (sv.length) {
-    const v = sv.pop(), np = sp.pop();
+    const v = sv.pop()!, np = sp.pop()!;
     const ty = raw.type[v], s = raw.pipe[v], t = raw.tSim[v];
     if (ty === LEAF) out.add(LEAF, s, t, np, fam);
     else if (ty === DUP) {
@@ -208,7 +171,7 @@ export function pruneFamily(raw, rootOld, out, fam) {
       const c1 = raw.firstChild[v], c2 = raw.nextSibling[c1];
       sv.push(resolve(c2)); sp.push(nv);                        // recipient, emitted second
       if (extant[c1] > 0) { sv.push(resolve(c1)); sp.push(nv); } // donor continues
-      else out.add(STUB, s, t, nv, fam);                          // donor copy lost right after
+      else out.add(LOSS, s, t, nv, fam);                          // donor copy lost right after
     } else if (ty === SPEC) {
       let m = 0, k = 0;
       for (let c = raw.firstChild[v]; c >= 0; c = raw.nextSibling[c]) { scratch[k++] = c; if (extant[c] > 0) m++; }
@@ -216,30 +179,37 @@ export function pruneFamily(raw, rootOld, out, fam) {
       for (let i = k - 1; i >= 0; i--) {
         const c = scratch[i];
         if (extant[c] > 0) { sv.push(resolve(c)); sp.push(nv); }
-        else out.add(STUB, raw.pipe[c], t, nv, fam);            // lost in that child pipe
+        else out.add(LOSS, raw.pipe[c], t, nv, fam);            // lost in that child pipe
       }
     }
   }
   return newRoot;
 }
 
+export type SimulateOptions = {
+  leaves: number; families: number; rD: number; rT: number; rL: number; locality: number; polyProb: number; seed: number; softCap: number;
+};
+export type Simulated = Scene & {
+  famRoots: number[];
+  counts: { S: number; D: number; T: number; L: number; leaves: number };
+  timing: { species: number; simulate: number; layout: number; total: number };
+};
+
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-/**
- * One call from parameters to a laid-out scene.
- * opts: { leaves, families, rD, rT, rL, locality, polyProb, seed, softCap }
- * Returns { S, G, Lay, famRoots, counts, timing }.
- */
-export function generate(opts) {
-  const o = { leaves: 256, families: 2, rD: 0.03, rT: 0.015, rL: 0.03, locality: 0.7, polyProb: 0.08, seed: 7, softCap: 3_000_000, ...opts };
+/** From parameters to a laid-out scene in one call. */
+export function generate(opts: Partial<SimulateOptions> = {}): Simulated {
+  const o: SimulateOptions = { leaves: 256, families: 2, rD: 0.03, rT: 0.015, rL: 0.03, locality: 0.7, polyProb: 0.08, seed: 7, softCap: 3_000_000, ...opts };
   const t0 = now();
   const rng = makeRng(o.seed);
-  const S = buildSpecies(o.leaves, o.polyProb, rng);
+  const S = buildUpper(o.leaves, o.polyProb, rng);
   const t1 = now();
-  const raw = new GeneStore(Math.max(1024, S.n * 4));
-  const G = new GeneStore(Math.max(1024, S.n * 2));
-  const rates = { rD: o.rD, rT: o.rT, rL: o.rL, locality: o.locality };
-  const famRoots = [];
+  const raw = new LowerForest(Math.max(1024, S.n * 4));
+  const G = new LowerForest(Math.max(1024, S.n * 2));
+  G.timed = true;
+  G.familyNames = Array.from({ length: o.families }, (_, f) => `family ${String.fromCharCode(65 + (f % 26))}`);
+  const rates: Rates = { rD: o.rD, rT: o.rT, rL: o.rL, locality: o.locality };
+  const famRoots: number[] = [];
   for (let f = 0; f < o.families; f++) {
     let rootNew = -1;
     for (let attempt = 0; attempt < 12 && rootNew < 0; attempt++) {
@@ -255,7 +225,7 @@ export function generate(opts) {
   const counts = { S: 0, D: 0, T: 0, L: 0, leaves: 0 };
   for (let v = 0; v < G.n; v++) {
     const ty = G.type[v];
-    if (ty === SPEC || ty === SPECLOSS) counts.S++; else if (ty === DUP) counts.D++; else if (ty === TRANS) counts.T++; else if (ty === STUB) counts.L++; else if (ty === LEAF) counts.leaves++;
+    if (ty === SPEC || ty === SPECLOSS) counts.S++; else if (ty === DUP) counts.D++; else if (ty === TRANS) counts.T++; else if (ty === LOSS) counts.L++; else if (ty === LEAF) counts.leaves++;
   }
-  return { S, G, Lay, famRoots, counts, timing: { species: t1 - t0, simulate: t2 - t1, layout: t3 - t2, total: t3 - t0 } };
+  return { upper: S, lower: G, layout: Lay, warnings: Lay.warnings, famRoots, counts, timing: { species: t1 - t0, simulate: t2 - t1, layout: t3 - t2, total: t3 - t0 } };
 }

@@ -1,5 +1,5 @@
 // Pseudo-Latin binomials for leaf labels, deterministic per (seed, species index).
-import { makeRng } from '../src/simulate.js';
+import { makeRng } from '../dist/simulate.js';
 
 const SYL = ['ka', 'ra', 'to', 'mi', 'ne', 'lu', 'sa', 'vo', 'ri', 'pe', 'da', 'no', 'xi', 'thu', 'ga', 'le', 'mo', 'ur', 'ce', 'pha', 'tri', 'oli', 'ven', 'dor', 'ast', 'bel', 'cor', 'fer', 'gal', 'hel', 'ix', 'jun', 'lom', 'mar', 'nub', 'ost', 'pil', 'quar', 'rud', 'sel', 'tar', 'umb', 'vir', 'wex', 'yl', 'zan'];
 const END_G = ['us', 'a', 'is', 'on', 'es', 'ium', 'ia', 'ops'];

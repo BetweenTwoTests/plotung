@@ -1,11 +1,11 @@
-// Demo app: wires the control panel to the simulator and the viewer.
-import { generate, createViewer, LEAF, TRANS, SPEC, SPECLOSS, STUB } from '../src/index.js';
+// Demo app: wires the control panel to the simulator (plotung/simulate) and the viewer.
+import { createViewer, Event } from '../dist/index.js';
+import { generate } from '../dist/simulate.js';
 import { makeSpeciesNamer } from './names.js';
 
 const el = (id) => document.getElementById(id);
-const FAM_LETTER = 'ABCDEFGH';
-const LEAF_CHOICES = [16, 64, 256, 1024, 4096, 16384, 65536, 131072];
-const demoState = { data: null, seed: 7, speciesName: (s) => 'species ' + s, familyColors: [] };
+const LEAF_CHOICES = [4, 5, 6, 8, 16, 64, 256, 1024, 4096, 16384, 65536, 131072];
+const demoState = { scene: null, seed: 7, speciesName: (s) => 'species ' + s, familyColors: [] };
 
 // ------------------------------------------------------------ theme from CSS tokens
 function readCssTheme() {
@@ -27,6 +27,7 @@ function applyTheme() {
 const tip = el('tooltip');
 const viewer = createViewer(el('c'), {
   minimap: el('minimap'),
+  labelFor: (s) => demoState.speciesName(s),
   labelFont: '11px "IBM Plex Sans", system-ui, sans-serif',
   rulerFont: '10px "IBM Plex Mono", ui-monospace, monospace',
   rulerInset: () => { const p = el('controls'); return (p.open && innerWidth > 760) ? p.getBoundingClientRect().width + 26 : 8; },
@@ -48,25 +49,25 @@ new MutationObserver(applyTheme).observe(document.documentElement, { attributes:
 // ------------------------------------------------------------ tooltips
 const esc = (t) => String(t).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 function pipeLabel(s) {
-  const { S } = demoState.data;
-  if (S.firstChild[s] < 0) return esc(demoState.speciesName(s));
+  const { upper } = demoState.scene;
+  if (upper.firstChild[s] < 0) return esc(demoState.speciesName(s));
   if (s === 0) return 'the root clade';
-  return `clade #${s} (${S.below[s].toLocaleString()} species)`;
+  return `clade #${s} (${upper.below[s].toLocaleString()} species)`;
 }
 function tooltipHtml(d) {
   const colors = demoState.familyColors;
   if (d.kind === 'gene' || d.kind === 'transfer') {
-    const fam = `<span class="tf" style="color:${colors[d.family % colors.length]}">family ${FAM_LETTER[d.family]}</span>`;
+    const fam = `<span class="tf" style="color:${colors[d.family % colors.length]}">${esc(d.familyName)}</span>`;
     let body;
-    if (d.type === LEAF) body = `gene copy in <i>${esc(demoState.speciesName(d.pipe))}</i>`;
-    else if (d.type === STUB) body = `lineage lost in the branch above ${pipeLabel(d.pipe)}`;
-    else if (d.type === TRANS) body = `from the branch above ${pipeLabel(d.pipe)}<br>to the branch above ${pipeLabel(d.recipientPipe)}`;
-    else if (d.type === SPEC || d.type === SPECLOSS) body = `at the split of ${pipeLabel(d.pipe)}`;
+    if (d.event === Event.LEAF) body = `gene copy in <i>${esc(demoState.speciesName(d.pipe))}</i>`;
+    else if (d.event === Event.LOSS) body = `lineage lost in the branch above ${pipeLabel(d.pipe)}`;
+    else if (d.event === Event.TRANS) body = `from the branch above ${pipeLabel(d.pipe)}<br>to the branch above ${pipeLabel(d.recipientPipe)}`;
+    else if (d.event === Event.SPEC || d.event === Event.SPECLOSS) body = `at the split of ${pipeLabel(d.pipe)}`;
     else body = `in the branch above ${pipeLabel(d.pipe)}`;
-    return `<b>${esc(d.typeName)}</b> · ${fam}<br>${body}<br><span class="tm">t = ${d.t.toFixed(2)} · ${d.extant.toLocaleString()} extant descendant${d.extant === 1 ? '' : 's'}</span>`;
+    return `<b>${esc(d.eventName)}</b> · ${fam}<br>${body}<br><span class="tm">t = ${d.t.toFixed(2)} · ${d.extant.toLocaleString()} extant descendant${d.extant === 1 ? '' : 's'}</span>`;
   }
   if (d.leaf) {
-    const parts = [...d.perFamily.entries()].sort((a, b) => a[0] - b[0]).map(([f, k]) => `<span style="color:${colors[f % colors.length]}">${FAM_LETTER[f]}×${k}</span>`).join(' ');
+    const parts = [...d.perFamily.entries()].sort((a, b) => a[0] - b[0]).map(([f, k]) => `<span style="color:${colors[f % colors.length]}">${String.fromCharCode(65 + f)}×${k}</span>`).join(' ');
     return `<b><i>${esc(demoState.speciesName(d.pipe))}</i></b><br>${d.genes} gene cop${d.genes === 1 ? 'y' : 'ies'}${parts ? ' · ' + parts : ''}<br><span class="tm">${d.events} event${d.events === 1 ? '' : 's'} on its branch · depth ${d.depth}</span>`;
   }
   const copies = (d.subGenes / d.below).toFixed(2);
@@ -77,7 +78,7 @@ function tooltipHtml(d) {
 window.addEventListener('keydown', (e) => {
   const tag = e.target && e.target.tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
-  if (!demoState.data) return;
+  if (!demoState.scene) return;
   const { width, height } = viewer.getSize();
   switch (e.key) {
     case 'f': case 'F': viewer.fitAll(true); break;
@@ -123,8 +124,10 @@ el('heat').addEventListener('change', (e) => viewer.setOptions({ heat: e.target.
 document.querySelectorAll('input[name=zoommode]').forEach((r) => r.addEventListener('change', (e) => viewer.setOptions({ zoomMode: e.target.value })));
 
 function readControls() {
-  return { leaves: +leavesSel.value, families: +el('families').value, rD: +el('rd').value, rT: +el('rt').value, rL: +el('rl').value,
-    locality: +el('locality').value, polyProb: +el('poly').value, seed: (+el('seed').value | 0) || 7 };
+  return {
+    leaves: +leavesSel.value, families: +el('families').value, rD: +el('rd').value, rT: +el('rt').value, rL: +el('rl').value,
+    locality: +el('locality').value, polyProb: +el('poly').value, seed: (+el('seed').value | 0) || 7,
+  };
 }
 function runGenerate() {
   const opts = readControls();
@@ -132,11 +135,10 @@ function runGenerate() {
   el('overlay-text').textContent = `Simulating ${opts.families} gene famil${opts.families === 1 ? 'y' : 'ies'} across ${opts.leaves.toLocaleString()} species…`;
   tip.hidden = true;
   setTimeout(() => {
-    const res = generate(opts);
-    demoState.data = res; demoState.seed = opts.seed;
+    const scene = generate(opts);
+    demoState.scene = scene; demoState.seed = opts.seed;
     demoState.speciesName = makeSpeciesNamer(opts.seed);
-    viewer.setLabelFor(demoState.speciesName);
-    viewer.setData(res);
+    viewer.setScene(scene);
     updateLegend(opts.families);
     updateStaticStats();
     el('overlay').hidden = true;
@@ -146,15 +148,15 @@ function updateLegend(nFam) {
   document.querySelectorAll('#legend .fam').forEach((row, i) => { row.hidden = i >= nFam; });
 }
 function updateStaticStats() {
-  const { S, G, counts, timing } = demoState.data;
-  el('stat-static').innerHTML = `<b>${S.nLeaves.toLocaleString()}</b> species (${S.n.toLocaleString()} nodes, depth ${S.maxDepth}) · <b>${G.n.toLocaleString()}</b> gene nodes · ` +
+  const { upper, lower, counts, timing } = demoState.scene;
+  el('stat-static').innerHTML = `<b>${upper.nLeaves.toLocaleString()}</b> species (${upper.n.toLocaleString()} nodes, depth ${upper.maxDepth}) · <b>${lower.n.toLocaleString()}</b> gene nodes · ` +
     `S ${counts.S.toLocaleString()} · D ${counts.D.toLocaleString()} · T ${counts.T.toLocaleString()} · L ${counts.L.toLocaleString()} · layout ${timing.total.toFixed(0)} ms`;
 }
 let lastStatsAt = 0;
 function updateLiveStats(stats) {
-  const now_ = performance.now();
-  if (now_ - lastStatsAt < 200) return;
-  lastStatsAt = now_;
+  const at = performance.now();
+  if (at - lastStatsAt < 200) return;
+  lastStatsAt = at;
   el('stat-live').textContent = `drawn: ${stats.pipes.toLocaleString()} pipes · ${stats.wedges.toLocaleString()} collapsed clades · ${stats.segs.toLocaleString()} gene segments · ${stats.transfers.toLocaleString()} transfers · ${stats.ms.toFixed(1)} ms/frame`;
 }
 

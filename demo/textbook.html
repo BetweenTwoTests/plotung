@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>plotung — input API example</title>
+<link rel="stylesheet" href="./demo.css">
+<style>
+  #stage{display:grid;grid-template-columns:minmax(280px,380px) 1fr;height:100%}
+  #side{padding:16px;overflow:auto;border-right:1px solid var(--panel-border);background:var(--panel-solid);font-size:12.5px}
+  #side h1{font-size:15px;margin:0 0 6px}
+  #side p{color:var(--ink-2);margin:0 0 10px;text-wrap:pretty}
+  #side textarea{width:100%;min-height:120px;font:11.5px "IBM Plex Mono",ui-monospace,monospace;color:var(--ink);background:var(--field);border:1px solid var(--panel-border);border-radius:6px;padding:8px;resize:vertical}
+  #side textarea.lower{min-height:340px}
+  #side label{display:block;color:var(--ink-3);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;margin:12px 0 4px;font-weight:600}
+  #msg{font:11.5px "IBM Plex Mono",ui-monospace,monospace;white-space:pre-wrap;margin-top:8px;color:var(--ink-2)}
+  #msg.err{color:#e34948}
+  #canvasWrap{position:relative}
+  #c{cursor:grab}
+  @media (max-width:760px){#stage{grid-template-columns:1fr;grid-template-rows:auto 1fr}#side{border-right:0;border-bottom:1px solid var(--panel-border)}}
+</style>
+</head>
+<body>
+<div id="stage">
+  <aside id="side">
+    <h1>Input API example</h1>
+    <p>The library takes an upper tree in Newick and lower trees as nested event nodes, each placed on an upper node by id. Edit either box; the picture re-renders on every valid change. Rule violations are reported below the boxes.</p>
+    <label for="upper">Upper tree (Newick)</label>
+    <textarea id="upper" spellcheck="false"></textarea>
+    <label for="lower">Lower trees (JSON, one root per family)</label>
+    <textarea id="lower" class="lower" spellcheck="false"></textarea>
+    <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+      <button id="render" class="primary" style="width:auto;margin:0">Render</button>
+      <label style="display:flex;gap:6px;align-items:center;margin:0;text-transform:none;letter-spacing:0;font-size:12px;color:var(--ink-2)"><input type="checkbox" id="slanted" checked> slanted tubes</label>
+    </div>
+    <div id="msg"></div>
+  </aside>
+  <div id="canvasWrap">
+    <canvas id="c" style="display:block;width:100%;height:100%"></canvas>
+    <div id="tooltip" hidden></div>
+  </div>
+</div>
+<script type="module" src="./textbook.js"></script>
+</body>
+</html>

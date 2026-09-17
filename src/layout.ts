@@ -1,24 +1,80 @@
 /* Nested layout: pipe widths from lane occupancy, a weighted tidy layout for the upper tree,
  * lane assignment with crossing reduction inside every pipe, and per-level time layering for events. */
-import { LEAF, DUP, TRANS, SPEC, SPECLOSS, STUB, LANE, PAD, GAP, STUBLEN, scratch } from './model.js';
+import { LEAF, DUP, TRANS, SPEC, SPECLOSS, LOSS, LANE, PAD, GAP, STUBLEN, scratch, type UpperTree, type LowerForest } from './model.ts';
+import type { Layout, CompileWarning } from './types.ts';
 
 /**
- * Lay out gene store G inside species tree S. Pure and deterministic; O(n log n) worst case.
- * Returns typed arrays indexed by species node (pipe) or gene node:
- *   pipeStart/pipeNodes  CSR of gene nodes per pipe (ids ascend, so parents precede children)
+ * Give duplications and transfers a level when the producer supplied none: a forward pass takes the
+ * earliest level allowed by the pipe, the parent and (for transfers) the recipient pipe; a backward pass
+ * takes the latest level allowed by children and both pipes; within that window the event is placed by
+ * its depth in the pipe-local chain so long pipes spread their events out.
+ */
+function assignEventTimes(S: UpperTree, G: LowerForest, warnings: CompileWarning[]): void {
+  const n = G.n, type = G.type, pipe = G.pipe, parent = G.parent, firstChild = G.firstChild, nextSibling = G.nextSibling, tSim = G.tSim;
+  const isEvent = (v: number) => type[v] === DUP || type[v] === TRANS;
+  const recipientPipe = (v: number): number => {
+    for (let c = firstChild[v]; c >= 0; c = nextSibling[c]) if (pipe[c] !== pipe[v]) return pipe[c];
+    return -1;
+  };
+  // backward: latest level, and the longest same-pipe event chain below each node
+  const latest = new Int32Array(n), chainBelow = new Int32Array(n);
+  for (let v = n - 1; v >= 0; v--) {
+    const s = pipe[v];
+    let hi = S.y[s] - 1, below = 0;
+    if (isEvent(v)) {
+      if (type[v] === TRANS) { const r = recipientPipe(v); if (r >= 0) hi = Math.min(hi, S.y[r] - 1); }
+      for (let c = firstChild[v]; c >= 0; c = nextSibling[c]) {
+        hi = Math.min(hi, latest[c]);
+        if (pipe[c] === s && isEvent(c)) below = Math.max(below, chainBelow[c] + 1);
+      }
+    }
+    latest[v] = hi; chainBelow[v] = below;
+  }
+  // forward: earliest level, then choose
+  const level = new Int32Array(n), chainDepth = new Int32Array(n);
+  for (let v = 0; v < n; v++) {
+    if (!isEvent(v)) continue;
+    const s = pipe[v], p = parent[v];
+    let lo = S.yTop[s];
+    let depth = 0;
+    if (p >= 0 && isEvent(p)) { lo = Math.max(lo, level[p]); if (pipe[p] === s) depth = chainDepth[p] + 1; }
+    if (type[v] === TRANS) { const r = recipientPipe(v); if (r >= 0) lo = Math.max(lo, S.yTop[r]); }
+    let hi = latest[v];
+    if (hi < lo) {
+      warnings.push({ code: 'time-inconsistent-transfer', message: `event in branch "${S.ids[s]}" cannot be placed after its parent and before its children while its transfer partner exists`, node: G.ids[v] });
+      hi = lo;
+    }
+    const chainLen = depth + chainBelow[v] + 1;
+    const frac = (depth + 1) / (chainLen + 1);
+    const want = Math.floor(S.yTop[s] + frac * (S.y[s] - S.yTop[s]));
+    const lv = Math.min(hi, Math.max(lo, want));
+    level[v] = lv; chainDepth[v] = depth;
+    let t = lv + frac;
+    // a child sharing its parent's level must sort after it, or the layering loses the ordering edge
+    if (p >= 0 && isEvent(p) && level[p] === lv && t <= tSim[p]) t = tSim[p] + (lv + 1 - tSim[p]) / 2;
+    tSim[v] = t;
+  }
+}
+
+/**
+ * Lay out lower forest G inside upper tree S. Pure and deterministic; O(n log n) worst case.
+ * Arrays indexed by upper node (pipe) or lower node:
+ *   pipeStart/pipeNodes  CSR of lower nodes per pipe (ids ascend, so parents precede children)
  *   L, W                 lanes and world width per pipe
  *   ext, xLeft, x        subtree extent, subtree left edge, pipe centre (orthogonal style)
  *   xs, topL, topW       pipe centre and top-edge slice for the slanted style
  *   subGenes, subEvents, pipeGenes, pipeEvents   aggregates for collapsed clades and tooltips
- *   target, gExt         mean leaf x and extant-leaf count under each gene node
- *   gT, tStart, lane     drawn time, segment start and (fractional) lane of each gene node
+ *   target, gExt         mean leaf x and extant-leaf count under each lower node
+ *   gT, tStart, lane     drawn time, segment start and (fractional) lane of each lower node
  *   transfers, recipient  transfer node ids and each transfer's recipient child
  */
-export function layout(S, G) {
+export function layout(S: UpperTree, G: LowerForest): Layout {
   const n = G.n, ns = S.n;
   const type = G.type, pipe = G.pipe, parent = G.parent, firstChild = G.firstChild, nextSibling = G.nextSibling, tSim = G.tSim;
+  const warnings: CompileWarning[] = [];
+  if (!G.timed) assignEventTimes(S, G, warnings);
 
-  // per-pipe CSR of gene nodes
+  // per-pipe CSR of lower nodes
   const pipeStart = new Int32Array(ns + 1);
   for (let v = 0; v < n; v++) pipeStart[pipe[v] + 1]++;
   for (let s = 0; s < ns; s++) pipeStart[s + 1] += pipeStart[s];
@@ -31,9 +87,9 @@ export function layout(S, G) {
   const pipeGenes = new Int32Array(ns), pipeEvents = new Int32Array(ns);
   for (let v = 0; v < n; v++) {
     const ty = type[v];
-    if (ty === LEAF || ty === SPEC || ty === SPECLOSS || ty === STUB) L[pipe[v]]++;
+    if (ty === LEAF || ty === SPEC || ty === SPECLOSS || ty === LOSS) L[pipe[v]]++;
     if (ty === LEAF) pipeGenes[pipe[v]]++;
-    if (ty === DUP || ty === TRANS || ty === STUB) pipeEvents[pipe[v]]++;
+    if (ty === DUP || ty === TRANS || ty === LOSS) pipeEvents[pipe[v]]++;
   }
 
   // upper-tree layout: width from lane count, extents bottom-up, positions top-down
@@ -78,12 +134,12 @@ export function layout(S, G) {
   }
   topL[0] = xs[0] - W[0] / 2; topW[0] = W[0];
 
-  // targets: mean x of the extant leaves below a gene node (children precede parents in reverse id order)
+  // targets: mean x of the extant leaves below a lower node (children precede parents in reverse id order)
   const target = new Float64Array(n), gExt = new Int32Array(n);
   for (let v = n - 1; v >= 0; v--) {
     const ty = type[v];
     if (ty === LEAF) { gExt[v] = 1; target[v] = x[pipe[v]]; }
-    else if (ty === STUB) { gExt[v] = 0; target[v] = x[pipe[v]]; }
+    else if (ty === LOSS) { gExt[v] = 0; target[v] = x[pipe[v]]; }
     else {
       let e = 0, acc = 0;
       for (let c = firstChild[v]; c >= 0; c = nextSibling[c]) { e += gExt[c]; acc += target[c] * gExt[c]; }
@@ -115,7 +171,7 @@ export function layout(S, G) {
     const a = levCount[li], b = levCount[li + 1], m = b - a;
     if (m === 0) continue;
     const seg = evNodes.subarray(a, b);
-    seg.sort((p, q) => tSim[p] - tSim[q]);
+    seg.sort((p, q) => tSim[p] - tSim[q] || p - q);
     const d = li - 1;
     for (let i = 0; i < m; i++) {
       const v = seg[i]; pos[v] = i;
@@ -143,19 +199,19 @@ export function layout(S, G) {
   const tStart = new Float64Array(n);
   for (let v = 0; v < n; v++) {
     const p = parent[v];
-    tStart[v] = p < 0 ? -1 : gT[p];
-    if (type[v] === STUB) gT[v] = Math.min(tStart[v] + STUBLEN, S.y[pipe[v]] - 0.05);
+    tStart[v] = p < 0 ? S.yTop[pipe[v]] : gT[p];
+    if (type[v] === LOSS) gT[v] = Math.min(tStart[v] + STUBLEN, S.y[pipe[v]] - 0.05);
   }
 
   // lane assignment, pipe by pipe in upper-tree pre-order (a parent pipe is laid out before its children)
   const lane = new Float32Array(n);
   const rootKey = new Float64Array(n);
-  const stackV = [], stackPh = [];
+  const stackV: number[] = [], stackPh: number[] = [];
   for (let i = 0; i < ns; i++) {
     const s = S.pre[i];
     const a = pipeStart[s], b = pipeStart[s + 1];
     if (a === b) continue;
-    const roots = [];
+    const roots: number[] = [];
     for (let j = a; j < b; j++) {
       const v = pipeNodes[j], p = parent[v];
       if (p < 0 || pipe[p] !== s) {
@@ -171,7 +227,7 @@ export function layout(S, G) {
     for (let r = 0; r < roots.length; r++) {
       stackV.push(roots[r]); stackPh.push(0);
       while (stackV.length) {
-        const v = stackV.pop(), ph = stackPh.pop();
+        const v = stackV.pop()!, ph = stackPh.pop()!;
         let k = 0;
         for (let c = firstChild[v]; c >= 0; c = nextSibling[c]) if (pipe[c] === s) scratch[k++] = c;
         if (ph === 0) {
@@ -200,11 +256,11 @@ export function layout(S, G) {
   }
 
   return { pipeStart, pipeNodes, L, W, ext, xLeft, x, xs, topL, topW, subGenes, subEvents, pipeGenes, pipeEvents, target, gExt, gT, tStart, lane, transfers, recipient,
-    worldWidth: ext[0], worldTop: -1, worldBottom: S.maxDepth };
+    worldWidth: ext[0], worldTop: -1, worldBottom: S.maxDepth, warnings };
 }
 
 /** World x of a lane inside pipe s at time t (slanted tubes interpolate between the pipe's top and bottom edges). */
-export function laneX(S, Lay, s, lane, t, slanted) {
+export function laneX(S: UpperTree, Lay: Layout, s: number, lane: number, t: number, slanted: boolean): number {
   const L = Lay.L[s];
   if (!slanted) return Lay.x[s] - (L - 1) / 2 * LANE + lane * LANE;
   const bot = Lay.xs[s] - (L - 1) / 2 * LANE + lane * LANE;
@@ -214,7 +270,7 @@ export function laneX(S, Lay, s, lane, t, slanted) {
 }
 
 /** Left and right wall of pipe s at time t, written into out[0], out[1]. */
-export function pipeEdges(S, Lay, s, t, slanted, out) {
+export function pipeEdges(S: UpperTree, Lay: Layout, s: number, t: number, slanted: boolean, out: number[]): number[] {
   const w = Lay.W[s];
   if (!slanted) { out[0] = Lay.x[s] - w / 2; out[1] = Lay.x[s] + w / 2; return out; }
   const bl = Lay.xs[s] - w / 2, br = Lay.xs[s] + w / 2;

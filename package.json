@@ -1,28 +1,36 @@
 {
   "name": "plotung",
-  "version": "0.1.0",
-  "description": "Zoomable tree-reconciliation visualization: an upper (species / host) tree drawn as tubes with lower (gene / symbiont) trees threaded inside, with duplication, loss and transfer events, scaling to 100k+ leaves.",
+  "version": "0.2.0",
+  "description": "Typed tree-reconciliation visualization: describe an upper (species / host) tree and lower (gene / symbiont) trees with their duplication, loss and transfer events, get a layout back, and render it on a zoomable canvas that scales to 100k+ leaves.",
   "type": "module",
-  "main": "./src/index.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.js",
-    "./model": "./src/model.js",
-    "./layout": "./src/layout.js",
-    "./simulate": "./src/simulate.js",
-    "./viewer": "./src/viewer.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./simulate": {
+      "types": "./dist/simulate.d.ts",
+      "default": "./dist/simulate.js"
+    }
   },
   "files": [
+    "dist",
     "src",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js",
-    "dev": "node scripts/serve.mjs",
-    "build": "node scripts/build-demo.mjs"
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "test": "node --test test/*.test.ts",
+    "dev": "npm run build && node scripts/serve.mjs",
+    "bundle": "npm run build && node scripts/build-demo.mjs",
+    "prepublishOnly": "npm run build && npm test"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.6"
   },
   "keywords": [
     "phylogenetics",
@@ -33,7 +41,8 @@
     "visualization",
     "canvas",
     "infinite-canvas",
-    "tree-layout"
+    "tree-layout",
+    "typescript"
   ],
   "author": "Leon Kim",
   "license": "MIT",
@@ -44,5 +53,8 @@
   "homepage": "https://github.com/BetweenTwoTests/plotung#readme",
   "bugs": {
     "url": "https://github.com/BetweenTwoTests/plotung/issues"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }
